@@ -1,6 +1,7 @@
 const MongoClient = require('mongodb').MongoClient;
 const assert = require('assert');
 const ObjectId = require('mongodb').ObjectId
+const faker = require('faker')
 
 const url = 'mongodb+srv://appuser:testdb101@cluster0-ndzld.mongodb.net/test?retryWrites=true';
 const dbName = 'testdb';
@@ -9,7 +10,29 @@ const client = new MongoClient(url, { useNewUrlParser: true });
 
 client.connect(async (err) => {
   assert.equal(null, err);
-  console.log("Connected correctly to server");
+  console.log("Connected to MongoDB on MongoAtlas");
+
+  // await client.db(dbName).collection("products").deleteMany({}) //Clear entire database
+
+  let count = await client.db(dbName).collection("products").countDocuments()
+  console.log(count);
+
+  if (count < 50) {
+    let productsList = Array(50).fill(0).map((x, i) => {
+      return {
+        name: faker.commerce.productName(),
+        price: faker.commerce.price(),
+        category: faker.commerce.department(),
+        tags: [faker.commerce.productAdjective(), faker.commerce.productMaterial()],
+        image: `https://picsum.photos/260/200?image=${Math.floor(Math.random() * 1000)}`,
+        headline: faker.lorem.sentence(),
+        description: faker.lorem.paragraph()
+      }
+    })
+
+    await client.db(dbName).collection("products").insertMany(productsList)
+  }
+
 });
 
 const stringifyIds = x => {
@@ -27,6 +50,11 @@ type Product {
   name: String
   price: Int
   category: String
+  tags: [String]
+  image: String
+  headline: String
+  description: String
+
 }
 
 type Query {
@@ -58,5 +86,5 @@ const resolvers = {
 const server = new ApolloServer({ typeDefs, resolvers });
 
 server.listen().then(({ url }) => {
-  console.log(`🚀  Server ready at ${url}`);
+  console.log(`Server running at ${url}`);
 });
