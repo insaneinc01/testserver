@@ -11,10 +11,6 @@ const url = 'mongodb+srv://appuser:testdb101@cluster0-ndzld.mongodb.net/test?ret
 const dbName = 'testdb';
 const client = new MongoClient(url, { useNewUrlParser: true });
 
-// const decoded = jwt.decode("eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJfaWQiOiI1YmU2YmU3NzRkMWQwYzExYWUwZTg5YzciLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZSI6WyJBRE1JTiJdfQ.tzAHnAY2K2I_yVvIOZake8afE7uVyj6bhmf2O0VOMO0", secret)
-// console.log(decoded);
-
-
 
 client.connect(async (err) => {
   assert.equal(null, err);
@@ -25,20 +21,29 @@ client.connect(async (err) => {
   let count = await client.db(dbName).collection("products").countDocuments()
   console.log(count);
 
-  if (count < 50) {
-    let productsList = Array(50).fill(0).map((x, i) => {
+  if (count < 10) {
+    let productsList = Array(10).fill(0).map((x, i) => {
       return {
         name: faker.commerce.productName(),
         price: faker.commerce.price(),
         category: faker.commerce.department(),
-        tags: [faker.commerce.productAdjective(), faker.commerce.productMaterial()],
+        tags: [faker.commerce.productAdjective(), faker.commerce.productAdjective(), faker.commerce.productMaterial()],
         image: `https://picsum.photos/260/200?image=${Math.floor(Math.random() * 1000)}`,
         headline: faker.lorem.sentence(),
-        description: faker.lorem.paragraph()
+        description: faker.lorem.paragraphs(),
+        inventory: Math.floor(Math.random() * 100),
+        instock: faker.random.boolean(),
+        featured: faker.random.boolean(),
+        rating: Math.floor(Math.random() * 5) + 1
       }
     })
 
-    await client.db(dbName).collection("products").insertMany(productsList)
+    const result = await client.db(dbName).collection("products").insertMany(productsList)
+    const categories = result.ops.map((item) => item.category)
+    const uniqueCategories = [...new Set(categories)]
+    const cats = uniqueCategories.map(item => ({category: item}))
+
+    await await client.db(dbName).collection("categories").insertMany(cats)
   }
 
   const adminUser = await client.db(dbName).collection("users").findOne({username: "admin"})
@@ -68,6 +73,15 @@ type Product {
   image: String
   headline: String
   description: String
+  inventory: Int
+  instock: Boolean
+  featured: Boolean
+  rating: Int
+}
+
+type Category {
+  _id: String
+  category: String
 }
 
 type User {
@@ -79,12 +93,13 @@ type User {
 type Query {
   "List of all products"
   products: [Product]
+  categories: [Category]
   product(_id: String): Product
 }
 
 type Mutation {
   login(username: String, password: String): User
-  createProduct(name: String, price: Int, category: String): Product
+  createProduct(name: String, price: Int, category: String, image: String, tags: [String], image: String, headline: String, description: String, inventory: Int , instock: Boolean, featured: Boolean, rating: Int): Product
 }
 
 `;
@@ -92,6 +107,7 @@ type Mutation {
 const resolvers = {
   Query: {
     products: async () => (await client.db(dbName).collection("products").find({}).toArray()).map(stringifyIds),
+    categories: async () => (await client.db(dbName).collection("categories").find({}).toArray()).map(stringifyIds),
     product: async (root, {_id}) => stringifyIds(await client.db(dbName).collection("products").findOne({_id: ObjectId(_id)}))
   },
   Mutation: {
@@ -106,12 +122,17 @@ const resolvers = {
           throw new ApolloError("Invalid Password", "Invalid_Password" )
         }
       } else {
-        throw new ApolloError("User does not exist", "No_Registered_User")
+        throw new ApolloError("User does not exist, please create an account", "No_Registered_User")
       }
     },
     createProduct: async (root, args, context, info) => {
-      const result = await client.db(dbName).collection("products").insertOne(args)
-      return stringifyIds(result.ops[0])
+      if (context.user && context.user.role.includes("ADMIN")) {
+        const result = await client.db(dbName).collection("products").insertOne({...args, ...{rating: 2}})
+        return stringifyIds(result.ops[0])
+      } else {
+        throw new ApolloError("Please login as ADMIN to create new products", "INVALID_PERMISSIONS")
+      }
+
     }
   }
 };
@@ -120,10 +141,15 @@ const server = new ApolloServer({
   typeDefs,
   resolvers,
   context: ({ req }) => {
-    const token = req.headers.authorization || ''
-    console.log(token)
-    // const user = getUser(token);
-    // return { user };
+    const token = req.headers.authorization || null
+
+    if (token) {
+      const user = jwt.decode(token.split("Bearer ")[1], secret)
+      return {user}
+    } else {
+      return {user: null}
+    }
+
   },
 });
 
